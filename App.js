@@ -1,18 +1,22 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Alert,
   FlatList,
+  Platform,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
+import Slider from '@react-native-community/slider';
 
 const STORAGE_KEY = '@sing4me_songs';
 const BACKGROUND_COLORS = ['#000000', '#ffffff', '#111111', '#071e3d', '#2b1f2b', '#1b3a31'];
@@ -27,6 +31,8 @@ const emptySong = {
     backgroundColor: '#000000',
     fontSize: 26,
     lineHighlights: {},
+    autoScroll: false,
+    autoScrollSpeed: 0.5,
   },
 };
 
@@ -38,29 +44,69 @@ export default function App() {
   const [lyricsLines, setLyricsLines] = useState(['']);
   const [configValues, setConfigValues] = useState(emptySong.config);
   const [loading, setLoading] = useState(true);
+  
+  const viewScrollRef = useRef(null);
+  const autoScrollIntervalRef = useRef(null);
+  const currentScrollPositionRef = useRef(0);
 
   useEffect(() => {
+    console.log('App mounted, loading songs...');
     loadSongs();
   }, []);
 
   useEffect(() => {
     if (screen === 'view') {
       activateKeepAwake();
+      
+      // Start auto-scroll if enabled
+      if (activeSong?.config?.autoScroll && viewScrollRef.current) {
+        currentScrollPositionRef.current = 0;
+        const speed = (activeSong.config.autoScrollSpeed || 0.5) * 2; // Convert to pixels per interval
+        
+        autoScrollIntervalRef.current = setInterval(() => {
+          currentScrollPositionRef.current += speed;
+          viewScrollRef.current?.scrollTo({
+            y: currentScrollPositionRef.current,
+            animated: false,
+          });
+        }, 100);
+      }
     } else {
       deactivateKeepAwake();
+      
+      // Clear auto-scroll interval
+      if (autoScrollIntervalRef.current) {
+        clearInterval(autoScrollIntervalRef.current);
+        autoScrollIntervalRef.current = null;
+      }
     }
-  }, [screen]);
+    
+    return () => {
+      if (autoScrollIntervalRef.current) {
+        clearInterval(autoScrollIntervalRef.current);
+        autoScrollIntervalRef.current = null;
+      }
+    };
+  }, [screen, activeSong?.config?.autoScroll, activeSong?.config?.autoScrollSpeed]);
 
   const sortedSongs = useMemo(() => [...songs].sort((a, b) => a.title.localeCompare(b.title)), [songs]);
+  const safeAreaStyle = [
+    styles.container,
+    Platform.OS === 'android' ? { paddingTop: StatusBar.currentHeight || 0 } : null,
+  ];
 
   async function loadSongs() {
     try {
+      console.log('loadSongs: starting...');
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
+      console.log('loadSongs: retrieved from storage', saved);
       const parsed = saved ? JSON.parse(saved) : [];
+      console.log('loadSongs: parsed songs', parsed);
       setSongs(parsed);
     } catch (error) {
       console.error('Failed to load songs', error);
     } finally {
+      console.log('loadSongs: setting loading to false');
       setLoading(false);
     }
   }
@@ -92,6 +138,8 @@ export default function App() {
       backgroundColor: song.config.backgroundColor || '#000000',
       fontSize: song.config.fontSize || 26,
       lineHighlights: song.config.lineHighlights || {},
+      autoScroll: song.config.autoScroll || false,
+      autoScrollSpeed: song.config.autoScrollSpeed || 0.5,
     });
     setScreen('configure');
   }
@@ -186,6 +234,8 @@ export default function App() {
         backgroundColor: configValues.backgroundColor,
         fontSize: configValues.fontSize,
         lineHighlights: configValues.lineHighlights,
+        autoScroll: configValues.autoScroll,
+        autoScrollSpeed: configValues.autoScrollSpeed,
       },
     };
     const nextSongs = songs.map(song => (song.id === updatedSong.id ? updatedSong : song));
@@ -226,7 +276,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={safeAreaStyle}>
+        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
         <Text style={styles.loadingText}>Loading songs…</Text>
       </SafeAreaView>
     );
@@ -234,9 +285,15 @@ export default function App() {
 
   if (screen === 'edit') {
     return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView style={styles.formContainer} keyboardShouldPersistTaps="handled">
-          <Text style={styles.heading}>{draftSong.id ? 'Edit song' : 'Add new song lyric'}</Text>
+      <SafeAreaView style={safeAreaStyle}>
+        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+        <ScrollView
+          style={styles.formContainer}
+          contentContainerStyle={styles.formContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.heading}>{draftSong.id ? 'Editar canción' : 'Nueva letra'}</Text>
+          <Text style={styles.sectionNote}>Guarda letras y ajusta cada línea sin perder nada.</Text>
           <Text style={styles.label}>Title</Text>
           <TextInput
             value={draftSong.title}
@@ -290,15 +347,15 @@ export default function App() {
             </View>
           ))}
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={[styles.primaryButton, styles.saveButton]} onPress={saveDraftSong}>
-              <Text style={styles.primaryText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.secondaryButton, styles.cancelButton]} onPress={() => setScreen('list')}>
-              <Text style={styles.secondaryText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
         </ScrollView>
+        <View style={styles.floatingActions} pointerEvents="box-none">
+          <TouchableOpacity style={[styles.floatingBubble, styles.floatingBubblePrimary]} onPress={saveDraftSong}>
+            <Text style={styles.floatingBubbleText}>💾</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.floatingBubble, styles.floatingBubbleSecondary]} onPress={() => setScreen('list')}>
+            <Text style={styles.floatingBubbleText}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -306,9 +363,15 @@ export default function App() {
   if (screen === 'configure' && activeSong) {
     const lines = activeSong.lyrics.length ? activeSong.lyrics.split(/\r?\n/) : [''];
     return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView style={styles.formContainer} keyboardShouldPersistTaps="handled">
-          <Text style={styles.heading}>Configure {activeSong.title}</Text>
+      <SafeAreaView style={safeAreaStyle}>
+        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+        <ScrollView
+          style={styles.formContainer}
+          contentContainerStyle={styles.formContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.heading}>Configura {activeSong.title}</Text>
+          <Text style={styles.sectionNote}>Cambia fondo, tamaño y destaca las líneas claves.</Text>
           <Text style={styles.label}>Background color</Text>
           <View style={styles.colorPalette}>
             {BACKGROUND_COLORS.map(color => (
@@ -349,15 +412,43 @@ export default function App() {
             </View>
           ))}
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={[styles.primaryButton, styles.saveButton]} onPress={saveConfiguration}>
-              <Text style={styles.primaryText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.secondaryButton, styles.cancelButton]} onPress={() => setScreen('list')}>
-              <Text style={styles.secondaryText}>Cancel</Text>
+          <Text style={styles.subheading}>Auto Scroll</Text>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Enable auto scroll</Text>
+            <TouchableOpacity
+              style={[styles.toggle, configValues.autoScroll && styles.toggleActive]}
+              onPress={() => setConfigValues(current => ({ ...current, autoScroll: !current.autoScroll }))}
+            >
+              <Text style={styles.toggleText}>{configValues.autoScroll ? '✓' : ''}</Text>
             </TouchableOpacity>
           </View>
+
+          {configValues.autoScroll && (
+            <View style={styles.sliderContainer}>
+              <Text style={styles.label}>Scroll speed: {(configValues.autoScrollSpeed).toFixed(1)}x</Text>
+              <Slider
+                style={styles.slider}
+                minimumValue={0.1}
+                maximumValue={0.9}
+                step={0.1}
+                value={configValues.autoScrollSpeed}
+                onValueChange={(value) => setConfigValues(current => ({ ...current, autoScrollSpeed: value }))}
+                minimumTrackTintColor="#3b82f6"
+                maximumTrackTintColor="#555"
+                thumbTintColor="#fff"
+              />
+            </View>
+          )}
+
         </ScrollView>
+        <View style={styles.floatingActions} pointerEvents="box-none">
+          <TouchableOpacity style={[styles.floatingBubble, styles.floatingBubblePrimary]} onPress={saveConfiguration}>
+            <Text style={styles.floatingBubbleText}>💾</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.floatingBubble, styles.floatingBubbleSecondary]} onPress={() => setScreen('list')}>
+            <Text style={styles.floatingBubbleText}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -365,15 +456,34 @@ export default function App() {
   if (screen === 'view' && activeSong) {
     const lines = activeSong.lyrics.length ? activeSong.lyrics.split(/\r?\n/) : [''];
     const viewConfig = activeSong.config || emptySong.config;
+    const titleColor = viewConfig.backgroundColor === '#ffffff' ? '#111827' : '#ffffff';
+    const viewSafeArea = [
+      styles.viewContainer,
+      { backgroundColor: viewConfig.backgroundColor || '#000' },
+      Platform.OS === 'android' ? { paddingTop: StatusBar.currentHeight || 0 } : null,
+    ];
     return (
-      <SafeAreaView style={[styles.viewContainer, { backgroundColor: viewConfig.backgroundColor || '#000' }]}> 
-        <View style={styles.viewHeader}>
-          <Text style={[styles.viewTitle, { fontSize: 20, color: viewConfig.backgroundColor === '#ffffff' ? '#000' : '#fff' }]}>{activeSong.title}</Text>
+      <SafeAreaView style={viewSafeArea}>
+        <StatusBar
+          barStyle={viewConfig.backgroundColor === '#ffffff' ? 'dark-content' : 'light-content'}
+          backgroundColor={viewConfig.backgroundColor || '#000'}
+        />
+        <View style={[styles.viewHeader, styles.viewHeaderElevated]}>
+          <Text style={[styles.viewTitle, { color: titleColor }]}>{activeSong.title}</Text>
           <TouchableOpacity style={styles.closeButton} onPress={() => setScreen('list')}>
-            <Text style={styles.closeText}>Back</Text>
+            <Text style={[styles.closeText, { color: titleColor }]}>Volver</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView style={styles.viewScroll} contentContainerStyle={styles.viewContent}>
+        <ScrollView 
+          ref={viewScrollRef}
+          style={styles.viewScroll} 
+          contentContainerStyle={styles.viewContent}
+          scrollEventThrottle={16}
+          onScroll={(event) => {
+            currentScrollPositionRef.current = event.nativeEvent.contentOffset.y;
+          }}
+        >
+          <Text style={[styles.viewSubtitle, { color: titleColor }]}>Desliza para navegar tus letras</Text>
           {lines.map((line, index) => {
             const highlight = viewConfig.lineHighlights?.[index];
             const useLightText = highlight && highlight !== 'transparent';
@@ -384,8 +494,8 @@ export default function App() {
                   color: useLightText ? '#000' : '#fff',
                   backgroundColor: highlight === 'transparent' ? 'transparent' : highlight || 'transparent',
                   fontSize: viewConfig.fontSize || 26,
-                  marginBottom: 10,
-                  lineHeight: (viewConfig.fontSize || 26) * 1.4,
+                  marginBottom: 0,
+                  lineHeight: (viewConfig.fontSize || 26) * 1.1,
                 }}
               >
                 {line}
@@ -393,21 +503,31 @@ export default function App() {
             );
           })}
         </ScrollView>
+        <View style={[styles.floatingActions, styles.floatingActionsView]} pointerEvents="box-none">
+          <TouchableOpacity style={[styles.floatingBubble, styles.floatingBubbleSecondary]} onPress={() => setScreen('list')}>
+            <Text style={styles.floatingBubbleText}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={safeAreaStyle}>
+      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
       <View style={styles.header}>
-        <Text style={styles.appTitle}>Sing4Me</Text>
+        <View>
+          <Text style={styles.appTitle}>Sing4Me</Text>
+          <Text style={styles.appSubtitle}>{sortedSongs.length} canciones guardadas</Text>
+        </View>
         <TouchableOpacity style={styles.addButton} onPress={openAddSong}>
-          <Text style={styles.addText}>+ Add new song lyric</Text>
+          <Text style={styles.addText}>+ Nueva letra</Text>
         </TouchableOpacity>
       </View>
       {sortedSongs.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>No songs yet. Add a song lyric to begin.</Text>
+          <Text style={styles.emptyTitle}>No hay canciones aún</Text>
+          <Text style={styles.emptyText}>Comienza creando una letra para verla aquí.</Text>
         </View>
       ) : (
         <FlatList
@@ -434,7 +554,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+  },
+  viewHeaderElevated: {
+    backgroundColor: '#00000055',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ffffff22',
+  },
+  viewSubtitle: {
+    fontSize: 14,
+    marginBottom: 18,
+    opacity: 0.85,
   },
   viewTitle: {
     fontWeight: '700',
@@ -458,20 +589,31 @@ const styles = StyleSheet.create({
   },
   header: {
     marginTop: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
   },
   appTitle: {
     color: '#fff',
     fontSize: 32,
     fontWeight: '800',
-    marginBottom: 16,
+    marginBottom: 6,
+  },
+  appSubtitle: {
+    color: '#94a3b8',
+    fontSize: 15,
+    marginTop: 4,
   },
   addButton: {
     backgroundColor: '#2563eb',
     paddingVertical: 14,
-    borderRadius: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+    minWidth: 140,
   },
   addText: {
     color: '#fff',
@@ -494,20 +636,34 @@ const styles = StyleSheet.create({
   },
   songActions: {
     flexDirection: 'row',
-    gap: 10,
     flexWrap: 'wrap',
+    marginTop: 14,
+  },
+  songButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginRight: 10,
+    marginBottom: 8,
+  },
+  smallButtonText: {
+    color: '#fff',
+    fontWeight: '700',
   },
   actionButton: {
     backgroundColor: '#1d4ed8',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 12,
+    marginRight: 10,
+    marginBottom: 8,
   },
   viewButton: {
     backgroundColor: '#f59e0b',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 12,
+    marginBottom: 8,
   },
   actionText: {
     color: '#fff',
@@ -521,19 +677,35 @@ const styles = StyleSheet.create({
     marginTop: 40,
     alignItems: 'center',
   },
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
   emptyText: {
     color: '#cbd5e1',
     fontSize: 16,
   },
   formContainer: {
     flex: 1,
-    paddingTop: 16,
+    paddingHorizontal: 16,
+  },
+  formContent: {
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   heading: {
     color: '#fff',
     fontSize: 28,
     fontWeight: '800',
-    marginBottom: 18,
+    marginBottom: 8,
+  },
+  sectionNote: {
+    color: '#94a3b8',
+    fontSize: 15,
+    marginBottom: 20,
+    lineHeight: 22,
   },
   label: {
     color: '#cbd5e1',
@@ -555,6 +727,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
   },
   clipboardButton: {
     paddingVertical: 8,
@@ -644,7 +817,6 @@ const styles = StyleSheet.create({
   colorPalette: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
     marginBottom: 16,
   },
   colorSwatch: {
@@ -656,7 +828,6 @@ const styles = StyleSheet.create({
   fontSizeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
     marginBottom: 20,
   },
   fontSizeButton: {
@@ -672,6 +843,42 @@ const styles = StyleSheet.create({
   fontSizeText: {
     color: '#fff',
     fontWeight: '700',
+  },
+  floatingActions: {
+    position: 'absolute',
+    right: 16,
+    top: 140,
+    alignItems: 'flex-end',
+    zIndex: 10,
+  },
+  floatingActionsView: {
+    top: undefined,
+    bottom: 24,
+  },
+  floatingBubble: {
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minWidth: 110,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  floatingBubblePrimary: {
+    backgroundColor: '#10b981',
+  },
+  floatingBubbleSecondary: {
+    backgroundColor: '#374151',
+  },
+  floatingBubbleText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
   },
   highlightBlock: {
     marginBottom: 14,
@@ -697,5 +904,51 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 40,
     fontSize: 18,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  toggleLabel: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  toggle: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#374151',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  toggleActive: {
+    backgroundColor: '#10b981',
+    borderColor: '#059669',
+  },
+  toggleText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  sliderContainer: {
+    marginBottom: 20,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+    marginTop: 8,
   },
 });
