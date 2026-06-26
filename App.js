@@ -377,7 +377,11 @@ export default function App() {
             {BACKGROUND_COLORS.map(color => (
               <TouchableOpacity
                 key={color}
-                style={[styles.colorSwatch, { backgroundColor: color, borderColor: configValues.backgroundColor === color ? '#fff' : '#333' }]}
+                style={[
+                  styles.colorSwatch,
+                  { backgroundColor: color },
+                  configValues.backgroundColor === color && styles.colorSwatchSelected,
+                ]}
                 onPress={() => setConfigValues(current => ({ ...current, backgroundColor: color }))}
               />
             ))}
@@ -824,6 +828,16 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 12,
     borderWidth: 2,
+    borderColor: '#333',
+  },
+  colorSwatchSelected: {
+    borderColor: '#ffffff',
+    borderWidth: 3,
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   fontSizeRow: {
     flexDirection: 'row',
@@ -864,10 +878,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 12,
     shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
   },
   floatingBubblePrimary: {
     backgroundColor: '#10b981',
